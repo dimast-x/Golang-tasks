@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/md5"
+	ws "golang-api/websocket"
 	"log"
 	"net/http"
 	"os"
@@ -56,6 +57,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	hub := ws.NewHub()
+	go hub.Run()
+
 	userService.InitSuperadminVars()
 	r.HandleFunc("/cake", logRequest(jwtService.jwtAuth(users, getCakeHandler))).Methods(http.MethodGet)
 	r.HandleFunc("/user/register", logRequest(userService.Register)).Methods(http.MethodPost)
@@ -65,6 +69,15 @@ func main() {
 	r.HandleFunc("/admin/promote", logRequest(jwtService.jwtAuthSuperuserOnly(users, userService.Promote))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/ban", logRequest(jwtService.jwtAdminAuth(&userService, jwtService.BanUser))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/unban", logRequest(jwtService.jwtAdminAuth(&userService, jwtService.UnbanUser))).Methods(http.MethodPost)
+	r.HandleFunc("/admin/ws", jwtService.jwtWS(&userService, hub))
+
+	go func() {
+		for {
+			message := []byte("echo")
+			hub.Broadcast <- message
+			time.Sleep(2 * time.Second)
+		}
+	}()
 
 	srv := http.Server{
 		Addr:    ":8080",
@@ -72,6 +85,7 @@ func main() {
 	}
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
+
 	go func() {
 		<-interrupt
 		ctx, cancel := context.WithTimeout(context.Background(),
@@ -81,6 +95,7 @@ func main() {
 	}()
 	log.Println("Server started, hit Ctrl+C to stop")
 	err = srv.ListenAndServe()
+
 	if err != nil {
 		log.Println("Server exited with error:", err)
 	}

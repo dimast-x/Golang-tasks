@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"errors"
+	ws "golang-api/websocket"
 	"net/http"
 	"strings"
 
@@ -152,5 +153,36 @@ func (j *JWTService) jwtAuthSuperuserOnly(
 			return
 		}
 		h(rw, r, user)
+	}
+}
+
+func (j *JWTService) jwtWS(service *UserService, hub *ws.Hub) http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		auth, err := j.ParseJWT(token)
+		if err != nil {
+			rw.WriteHeader(401)
+			rw.Write([]byte("unauthorized"))
+			return
+		}
+		user, err := service.repository.Get(auth.Email)
+		if err != nil {
+			rw.WriteHeader(401)
+			rw.Write([]byte("unauthorized"))
+			return
+		}
+		reason := j.blacklist[auth.Email]
+		if len(reason) != 0 {
+			rw.WriteHeader(401)
+			rw.Write([]byte("banned. reason: " + reason))
+			return
+		}
+		if user.Role == "user" {
+			rw.WriteHeader(401)
+			rw.Write([]byte("you are not allowed to ban other users"))
+			return
+		}
+		ws.ServeWs(hub, rw, r)
 	}
 }
