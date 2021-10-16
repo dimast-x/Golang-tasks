@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/streadway/amqp"
 )
 
@@ -55,16 +58,51 @@ func publish(messages <-chan string, ch *amqp.Channel, q amqp.Queue) {
 	}
 }
 
+var (
+	TotalUsers = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "total_users",
+		Help: "The total number of users",
+	})
+
+	GivenCakes = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "given_cakes",
+		Help: "The total number of given cakes",
+	})
+
+	TotalRequests = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "total_requests",
+		Help: "The total number of requests",
+	})
+
+	Request = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "requests",
+			Help: "Time and path of every request execution",
+		},
+		[]string{"time", "path"},
+	)
+
+	users    = NewInMemoryUserStorage()
+	messages = make(chan string)
+)
+
+func recordMetrics() {
+	go func() {
+		for {
+			TotalUsers.Set(float64(len(users.storage)))
+			time.Sleep(time.Second)
+		}
+	}()
+}
+
 func Publish(msg string) {
 	messages <- msg
 }
 
-var messages = make(chan string)
-
 func main() {
-
+	prometheus.MustRegister(Request)
+	recordMetrics()
 	r := mux.NewRouter()
-	users := NewInMemoryUserStorage()
 	userService := UserService{repository: users}
 	jwtService, err := NewJWTService("pubkey.rsa", "privkey.rsa")
 	if err != nil {
@@ -94,6 +132,8 @@ func main() {
 	r.HandleFunc("/admin/ban", logRequest(jwtService.jwtAdminAuth(&userService, jwtService.BanUser))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/unban", logRequest(jwtService.jwtAdminAuth(&userService, jwtService.UnbanUser))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/ws", jwtService.jwtWS(&userService, hub))
+
+	r.Handle("/metrics", promhttp.Handler())
 
 	q, err := ch.QueueDeclare(
 		"hello", // name
@@ -143,7 +183,10 @@ func main() {
 	}
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
-
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(":2112", nil)
+	}()
 	go func() {
 		<-interrupt
 		ctx, cancel := context.WithTimeout(context.Background(),

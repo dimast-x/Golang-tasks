@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type logWriter struct {
@@ -46,5 +49,7 @@ func logRequest(h http.HandlerFunc) http.HandlerFunc {
 			string(body),
 			writer.response.String(),
 		)
+		Request.With(prometheus.Labels{"time": fmt.Sprint(time.Now()), "path": r.URL.Path}).Inc()
+		TotalRequests.Inc()
 	}
 }

@@ -338,7 +338,8 @@ func (j *JWTService) UnbanUser(w http.ResponseWriter, r *http.Request, admin Use
 
 func getCakeHandler(w http.ResponseWriter, r *http.Request, u User) {
 	w.Write([]byte(u.FavoriteCake))
-	Publish(u.Email + " discovered that his favorite cake is " + u.FavoriteCake)
+	Publish(u.Email + " took his cake: " + u.FavoriteCake)
+	GivenCakes.Inc()
 }
 
 func getInfoHandler(w http.ResponseWriter, r *http.Request, u User) {
