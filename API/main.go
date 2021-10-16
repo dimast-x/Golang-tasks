@@ -11,15 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/streadway/amqp"
 )
-
-func getCakeHandler(w http.ResponseWriter, r *http.Request, u User) {
-	w.Write([]byte(u.FavoriteCake))
-}
-
-func getInfoHandler(w http.ResponseWriter, r *http.Request, u User) {
-	w.Write([]byte(u.Email + ", " + u.FavoriteCake + ", " + u.Role))
-}
 
 func wrapJwt(jwt *JWTService, f func(http.ResponseWriter, *http.Request, *JWTService)) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
@@ -48,6 +41,26 @@ func (u *UserService) InitSuperadminVars() {
 	u.AddSuperadmin()
 }
 
+func publish(messages <-chan string, ch *amqp.Channel, q amqp.Queue) {
+	for body := range messages {
+		ch.Publish(
+			"",     // exchange
+			q.Name, // routing key
+			false,  // mandatory
+			false,  // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(body),
+			})
+	}
+}
+
+func Publish(msg string) {
+	messages <- msg
+}
+
+var messages = make(chan string)
+
 func main() {
 
 	r := mux.NewRouter()
@@ -60,6 +73,17 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
+	rmqconn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	if err != nil {
+		panic(err)
+	}
+	defer rmqconn.Close()
+	ch, err := rmqconn.Channel()
+	if err != nil {
+		panic(err)
+	}
+	defer ch.Close()
+
 	userService.InitSuperadminVars()
 	r.HandleFunc("/cake", logRequest(jwtService.jwtAuth(users, getCakeHandler))).Methods(http.MethodGet)
 	r.HandleFunc("/user/register", logRequest(userService.Register)).Methods(http.MethodPost)
@@ -71,11 +95,45 @@ func main() {
 	r.HandleFunc("/admin/unban", logRequest(jwtService.jwtAdminAuth(&userService, jwtService.UnbanUser))).Methods(http.MethodPost)
 	r.HandleFunc("/admin/ws", jwtService.jwtWS(&userService, hub))
 
+	q, err := ch.QueueDeclare(
+		"hello", // name
+		false,   // durable
+		false,   // delete when unused
+		false,   // exclusive
+		false,   // no-wait
+		nil,     // arguments
+	)
+	if err != nil {
+		panic(err)
+	}
+	msgs, err := ch.Consume(
+		q.Name, // queue
+		"",     // consumer
+		true,   // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // args
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// go func() {
+	// 	for {
+	// 		Publish("Hello World!")
+	// 		time.Sleep(1 * time.Second)
+	// 	}
+	// }()
+
+	for w := 1; w <= 6; w++ {
+		go publish(messages, ch, q)
+	}
+
 	go func() {
-		for {
-			message := []byte("echo")
-			hub.Broadcast <- message
-			time.Sleep(2 * time.Second)
+		for d := range msgs {
+			log.Printf("Received a message: %s", d.Body)
+			hub.Broadcast <- []byte(d.Body)
 		}
 	}()
 

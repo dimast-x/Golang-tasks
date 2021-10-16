@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"net/mail"
 	//"net/mail"
@@ -135,6 +134,7 @@ func (u *UserService) Register(w http.ResponseWriter, r *http.Request) {
 		handleError(err, w)
 		return
 	}
+	Publish(params.Email + " is successfully registered")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("registered"))
 }
@@ -160,6 +160,7 @@ func (u *UserService) UpdateCake(w http.ResponseWriter, r *http.Request, usr Use
 		handleError(err, w)
 		return
 	}
+	Publish(usr.Email + " has successfully updated his cake")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("Cake updated"))
 }
@@ -185,6 +186,7 @@ func (u *UserService) UpdateEmail(w http.ResponseWriter, r *http.Request, usr Us
 		handleError(err, w)
 		return
 	}
+	Publish(usr.Email + " has successfully updated his email")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("Email updated"))
 }
@@ -211,11 +213,12 @@ func (u *UserService) UpdatePassword(w http.ResponseWriter, r *http.Request, usr
 		handleError(err, w)
 		return
 	}
+	Publish(usr.Email + " has successfully updated his password")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("Password updated"))
 }
 
-func (u *UserService) Promote(w http.ResponseWriter, r *http.Request, usr User) {
+func (u *UserService) Promote(w http.ResponseWriter, r *http.Request, admin User) {
 	resp, err := io.ReadAll(r.Body)
 	if err != nil {
 		panic(err)
@@ -230,7 +233,7 @@ func (u *UserService) Promote(w http.ResponseWriter, r *http.Request, usr User) 
 		panic(err)
 	}
 	if user.Role != "user" {
-		panic("user is not just a user!")
+		panic("user is already admin!")
 	}
 
 	newData := User{
@@ -239,16 +242,17 @@ func (u *UserService) Promote(w http.ResponseWriter, r *http.Request, usr User) 
 		FavoriteCake:   user.FavoriteCake,
 		Role:           "admin",
 	}
-	err = u.repository.Update(usr.Email, newData)
+	err = u.repository.Update(user.Email, newData)
 	if err != nil {
 		handleError(err, w)
 		return
 	}
+	Publish(admin.Email + " has successfully promoted " + user.Email)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("User is successfully promoted"))
 }
 
-func (u *UserService) Fire(w http.ResponseWriter, r *http.Request, usr User) {
+func (u *UserService) Fire(w http.ResponseWriter, r *http.Request, admin User) {
 	resp, err := io.ReadAll(r.Body)
 	if err != nil {
 		panic(err)
@@ -263,7 +267,7 @@ func (u *UserService) Fire(w http.ResponseWriter, r *http.Request, usr User) {
 		panic(err)
 	}
 	if user.Role != "admin" {
-		panic("this user is not an admin!")
+		panic("user is not an admin!")
 	}
 
 	newData := User{
@@ -272,16 +276,17 @@ func (u *UserService) Fire(w http.ResponseWriter, r *http.Request, usr User) {
 		FavoriteCake:   user.FavoriteCake,
 		Role:           "user",
 	}
-	err = u.repository.Update(usr.Email, newData)
+	err = u.repository.Update(user.Email, newData)
 	if err != nil {
 		handleError(err, w)
 		return
 	}
+	Publish(admin.Email + " has successfully fired " + user.Email)
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("User is successfully fired!!!"))
+	w.Write([]byte("User is successfully fired"))
 }
 
-func (j *JWTService) BanUser(w http.ResponseWriter, r *http.Request, usr User, u *UserService) {
+func (j *JWTService) BanUser(w http.ResponseWriter, r *http.Request, admin User, u *UserService) {
 	params := &BanInfo{}
 	err := json.NewDecoder(r.Body).Decode(params)
 	if err != nil {
@@ -293,20 +298,20 @@ func (j *JWTService) BanUser(w http.ResponseWriter, r *http.Request, usr User, u
 		handleError(errors.New("could not read params"), w)
 		return
 	}
-	if usr.Role == "superadmin" {
+	if admin.Role == "superadmin" {
 		j.blacklist[params.Email] = "banned. reason: " + params.Reason
-	} else if usr.Role == "admin" && userToBan.Role == "user" {
+	} else if admin.Role == "admin" && userToBan.Role == "user" {
 		j.blacklist[params.Email] = "banned. reason: " + params.Reason
 	} else {
 		handleError(errors.New("user has not enough rights"), w)
 		return
 	}
-	log.Println(usr.Email + " has successfully banned " + userToBan.Email)
+	Publish(admin.Email + " has successfully banned " + userToBan.Email)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("User is successfully banned"))
 }
 
-func (j *JWTService) UnbanUser(w http.ResponseWriter, r *http.Request, usr User, u *UserService) {
+func (j *JWTService) UnbanUser(w http.ResponseWriter, r *http.Request, admin User, u *UserService) {
 	params := &BanInfo{}
 	err := json.NewDecoder(r.Body).Decode(params)
 	if err != nil {
@@ -318,17 +323,27 @@ func (j *JWTService) UnbanUser(w http.ResponseWriter, r *http.Request, usr User,
 		handleError(errors.New("could not read params"), w)
 		return
 	}
-	if usr.Role == "superadmin" {
+	if admin.Role == "superadmin" {
 		delete(j.blacklist, params.Email)
-	} else if usr.Role == "admin" && userToUnban.Role == "user" {
+	} else if admin.Role == "admin" && userToUnban.Role == "user" {
 		delete(j.blacklist, params.Email)
 	} else {
 		handleError(errors.New("user has not enough rights"), w)
 		return
 	}
-	log.Println(usr.Email + " has successfully unbanned " + userToUnban.Email)
+	Publish(admin.Email + " has successfully unbanned " + userToUnban.Email)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("User is successfully unbanned"))
+}
+
+func getCakeHandler(w http.ResponseWriter, r *http.Request, u User) {
+	w.Write([]byte(u.FavoriteCake))
+	Publish(u.Email + " discovered that his favorite cake is " + u.FavoriteCake)
+}
+
+func getInfoHandler(w http.ResponseWriter, r *http.Request, u User) {
+	w.Write([]byte(u.Email + ", " + u.FavoriteCake + ", " + u.Role))
+	Publish(u.Email + " discovered some info about him: " + u.FavoriteCake + ", " + u.Role)
 }
 
 func handleError(err error, w http.ResponseWriter) {
